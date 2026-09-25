@@ -1,17 +1,14 @@
-import { SignalingApi } from '../signaling/api.js';
-import { SignalingClient } from '../signaling/client.js';
-
-/** @typedef {'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error'} SessionPhase */
-
 /**
  * Viewer-only WebRTC audio session using native RTCPeerConnection.
  * Monitor creates the offer; this peer answers and plays remote audio.
+ *
+ * @typedef {'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error'} SessionPhase
  */
 export class WebrtcViewerSession {
   /**
    * @param {{
-   *   signaling: SignalingClient,
-   *   api: SignalingApi,
+   *   signaling: import('../signaling/client.js').SignalingClient,
+   *   api: import('../signaling/api.js').SignalingApi,
    *   onState?: () => void,
    *   onAlert?: (alert: { kind: string, level?: number, message: string, at?: string }) => void,
    * }} deps
