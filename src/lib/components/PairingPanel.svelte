@@ -2,26 +2,37 @@
   /**
    * @type {{
    *   busy: boolean,
+   *   waiting: boolean,
+   *   statusMessage: string | null,
    *   error: string | null,
-   *   onClaimCode: (code: string, token: string) => Promise<void>,
-   *   onClaimJson: (raw: string) => Promise<void>,
+   *   onClaimCode: (code: string, deviceLabel: string) => Promise<void>,
+   *   onClaimJson: (raw: string, deviceLabel: string) => Promise<void>,
+   *   onCancel: () => void,
    * }}
    */
-  let { busy, error, onClaimCode, onClaimJson } = $props();
+  let {
+    busy,
+    waiting,
+    statusMessage,
+    error,
+    onClaimCode,
+    onClaimJson,
+    onCancel,
+  } = $props();
 
   let code = $state('');
-  let token = $state('');
+  let deviceLabel = $state('');
   let json = $state('');
-  let mode = $state(/** @type {'code' | 'json'} */ ('json'));
+  let mode = $state(/** @type {'code' | 'json'} */ ('code'));
 
   async function submitCode(e) {
     e.preventDefault();
-    await onClaimCode(code.trim(), token.trim());
+    await onClaimCode(code.trim(), deviceLabel.trim());
   }
 
   async function submitJson(e) {
     e.preventDefault();
-    await onClaimJson(json.trim());
+    await onClaimJson(json.trim(), deviceLabel.trim());
   }
 </script>
 
@@ -29,79 +40,94 @@
   <header>
     <h2 id="pair-title">Pair with a Monitor</h2>
     <p>
-      On the phone Monitor, show the QR or copy the pairing JSON. Paste it here,
-      or enter the short code plus pairing token.
+      Enter the 5-character code from the phone Monitor. The monitor must tap
+      <strong>Accept</strong> before this viewer gets a session — nothing binds
+      until then.
     </p>
   </header>
 
-  <div class="tabs" role="tablist" aria-label="Pairing method">
-    <button
-      type="button"
-      role="tab"
-      aria-selected={mode === 'json'}
-      class:active={mode === 'json'}
-      onclick={() => (mode = 'json')}
-    >
-      Paste payload
-    </button>
-    <button
-      type="button"
-      role="tab"
-      aria-selected={mode === 'code'}
-      class:active={mode === 'code'}
-      onclick={() => (mode = 'code')}
-    >
-      Code + token
-    </button>
-  </div>
-
-  {#if mode === 'json'}
-    <form class="form" onsubmit={submitJson}>
-      <label>
-        Pairing JSON
-        <textarea
-          rows="5"
-          bind:value={json}
-          placeholder={'{"v":1,"roomId":"…","token":"…","code":"AB3K9Q","signaling":"wss://…/ws"}'}
-          spellcheck="false"
-          disabled={busy}
-        ></textarea>
-      </label>
-      <button type="submit" class="primary" disabled={busy || !json.trim()}>
-        {busy ? 'Claiming…' : 'Claim & connect'}
-      </button>
-    </form>
+  {#if waiting}
+    <div class="waiting" role="status" aria-live="polite">
+      <p class="waiting-title">Waiting for the monitor to Accept…</p>
+      {#if statusMessage}
+        <p class="waiting-detail">{statusMessage}</p>
+      {/if}
+      <button type="button" class="ghost" onclick={onCancel}>Cancel</button>
+    </div>
   {:else}
-    <form class="form" onsubmit={submitCode}>
-      <label>
-        Short code
-        <input
-          bind:value={code}
-          maxlength="8"
-          autocomplete="off"
-          autocapitalize="characters"
-          placeholder="AB3K9Q"
-          disabled={busy}
-        />
-      </label>
-      <label>
-        Pairing token
-        <input
-          bind:value={token}
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="From monitor QR JSON token field"
-          disabled={busy}
-        />
-      </label>
+    <div class="tabs" role="tablist" aria-label="Pairing method">
       <button
-        type="submit"
-        class="primary"
-        disabled={busy || !code.trim() || !token.trim()}
+        type="button"
+        role="tab"
+        aria-selected={mode === 'code'}
+        class:active={mode === 'code'}
+        onclick={() => (mode = 'code')}
       >
-        {busy ? 'Claiming…' : 'Claim with code + token'}
+        Enter code
       </button>
-    </form>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'json'}
+        class:active={mode === 'json'}
+        onclick={() => (mode = 'json')}
+      >
+        Paste QR JSON
+      </button>
+    </div>
+
+    {#if mode === 'code'}
+      <form class="form" onsubmit={submitCode}>
+        <label>
+          Short code
+          <input
+            bind:value={code}
+            maxlength="8"
+            autocomplete="off"
+            autocapitalize="characters"
+            placeholder="K7M2Q"
+            disabled={busy}
+          />
+        </label>
+        <label>
+          Device name <span class="optional">(optional)</span>
+          <input
+            bind:value={deviceLabel}
+            autocomplete="off"
+            placeholder="Cailen's laptop"
+            disabled={busy}
+          />
+        </label>
+        <button type="submit" class="primary" disabled={busy || !code.trim()}>
+          {busy ? 'Sending…' : 'Request pairing'}
+        </button>
+      </form>
+    {:else}
+      <form class="form" onsubmit={submitJson}>
+        <label>
+          Pairing JSON
+          <textarea
+            rows="5"
+            bind:value={json}
+            placeholder={'{"v":2,"code":"K7M2Q","roomId":"…","signaling":"wss://…/ws"}'}
+            spellcheck="false"
+            disabled={busy}
+          ></textarea>
+        </label>
+        <label>
+          Device name <span class="optional">(optional)</span>
+          <input
+            bind:value={deviceLabel}
+            autocomplete="off"
+            placeholder="Cailen's laptop"
+            disabled={busy}
+          />
+        </label>
+        <button type="submit" class="primary" disabled={busy || !json.trim()}>
+          {busy ? 'Sending…' : 'Request pairing'}
+        </button>
+      </form>
+    {/if}
   {/if}
 
   {#if error}
@@ -166,6 +192,11 @@
     color: var(--ink-soft);
   }
 
+  .optional {
+    font-weight: 450;
+    opacity: 0.75;
+  }
+
   input,
   textarea {
     width: 100%;
@@ -196,6 +227,42 @@
   .primary:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+  }
+
+  .waiting {
+    display: grid;
+    gap: 0.65rem;
+    padding: 1.1rem 1.2rem;
+    border: 1px dashed var(--line);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.45);
+  }
+
+  .waiting-title {
+    margin: 0;
+    font-weight: 650;
+    color: var(--ink);
+  }
+
+  .waiting-detail {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+  }
+
+  .ghost {
+    justify-self: start;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.55rem 1.1rem;
+    background: transparent;
+    color: var(--ink-soft);
+    font-weight: 550;
+  }
+
+  .ghost:hover {
+    color: var(--ink);
+    border-color: var(--ink-soft);
   }
 
   .error {

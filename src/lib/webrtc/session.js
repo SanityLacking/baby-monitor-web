@@ -45,6 +45,7 @@ export class WebrtcViewerSession {
    *   roomId: string,
    *   token: string,
    *   deviceId: string,
+   *   viewerId?: string,
    *   signalingWsUrl: string,
    *   signalingBaseUrl: string,
    *   audioEl?: HTMLAudioElement | null,
@@ -62,6 +63,7 @@ export class WebrtcViewerSession {
         roomId: opts.roomId,
         token: opts.token,
         deviceId: opts.deviceId,
+        viewerId: opts.viewerId,
         signalingWsUrl: opts.signalingWsUrl,
         signalingBaseUrl: opts.signalingBaseUrl,
       });
