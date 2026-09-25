@@ -9,7 +9,7 @@
   import { PairingPayload } from './lib/pairing.js';
   import { SignalingApi, SignalingApiError } from './lib/signaling/api.js';
   import { SignalingClient } from './lib/signaling/client.js';
-  import { normalizeBase, wsUrlFromBase } from './lib/signaling/urls.js';
+  import { normalizeBase, baseFromWs, wsUrlFromBase } from './lib/signaling/urls.js';
   import {
     clearPairing,
     loadOrCreateDeviceId,
@@ -27,7 +27,12 @@
   let pairing = $state(loadPairing());
 
   let claimBusy = $state(false);
+  let claimWaiting = $state(false);
+  let claimStatus = $state(/** @type {string | null} */ (null));
   let claimError = $state(/** @type {string | null} */ (null));
+  /** @type {AbortController | null} */
+  let claimAbort = $state(null);
+
   let settingsOpen = $state(false);
   let healthText = $state(/** @type {string | null} */ (null));
   let healthBusy = $state(false);
@@ -65,10 +70,16 @@
   });
 
   onMount(() => {
-    const off = signaling.onStatus(() => {
+    const offStatus = signaling.onStatus(() => {
       signalingConnected = signaling.connected;
       if (signaling.lastError && session.phase !== 'connected') {
         sessionMessage = signaling.lastError;
+      }
+    });
+
+    const offMsg = signaling.onMessage((msg) => {
+      if (String(msg.type || '') === 'pairing_revoked') {
+        void handleRevoked();
       }
     });
 
@@ -77,10 +88,20 @@
     }
 
     return () => {
-      off();
+      offStatus();
+      offMsg();
+      claimAbort?.abort();
       void session.stop();
     };
   });
+
+  async function handleRevoked() {
+    await session.stop();
+    clearPairing();
+    pairing = null;
+    alerts = [];
+    claimError = 'This device was unpaired on the monitor.';
+  }
 
   /**
    * @param {PairingPayload} next
@@ -91,6 +112,7 @@
       roomId: next.roomId,
       token: /** @type {string} */ (next.joinToken),
       deviceId,
+      viewerId: next.viewerId || undefined,
       signalingWsUrl: next.signalingWsUrl,
       signalingBaseUrl: signalingBase,
       audioEl,
@@ -99,91 +121,188 @@
   }
 
   /**
+   * Run Accept-gated claim: POST claim → poll until accepted → persist + connect.
    * @param {string} code
-   * @param {string} token
+   * @param {string} [deviceLabel]
    */
-  async function claimWithCode(code, token) {
+  async function runAcceptGatedClaim(code, deviceLabel = '') {
     claimError = null;
-    if (!code || !token) {
-      claimError = 'Short code and pairing token are both required.';
+    claimStatus = null;
+    const normalized = code
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    if (!normalized) {
+      claimError = 'Enter the 5-character code from the monitor.';
       return;
     }
+
+    claimAbort?.abort();
+    const ac = new AbortController();
+    claimAbort = ac;
+
     claimBusy = true;
+    claimWaiting = false;
     try {
       api.setBaseUrl(signalingBase);
-      const claimed = await api.claimRoom({
-        code,
-        pairingToken: token,
+      claimStatus = 'Sending pairing request…';
+      let result = await api.claimRoom({
+        code: normalized,
         deviceId,
+        deviceLabel: deviceLabel || undefined,
       });
+
+      if (result.legacyImmediateClaim) {
+        claimStatus =
+          'Paired (legacy server issued tokens immediately — no Accept gate).';
+      }
+
+      if (result.status === 'pending_accept') {
+        claimWaiting = true;
+        result = await api.waitForAccept(result, {
+          signal: ac.signal,
+          onStatus: (msg) => {
+            claimStatus = msg;
+          },
+          onPairingResult: (handler) => signaling.onMessage(handler),
+        });
+      }
+
+      if (result.status === 'rejected') {
+        throw new SignalingApiError(
+          403,
+          result.error || 'The monitor declined this pairing.',
+          'rejected',
+        );
+      }
+      if (result.status === 'expired') {
+        throw new SignalingApiError(
+          408,
+          result.error || 'That request timed out. Enter the code again.',
+          'expired',
+        );
+      }
+      if (
+        result.status !== 'accepted' ||
+        !result.sessionToken ||
+        !result.roomId
+      ) {
+        throw new SignalingApiError(
+          0,
+          result.error || 'Pairing did not complete',
+        );
+      }
+
       const next = new PairingPayload({
-        roomId: claimed.roomId,
-        pairingToken: token,
-        sessionToken: claimed.sessionToken,
-        signalingWsUrl: claimed.signalingWsUrl,
+        version: 2,
+        roomId: result.roomId,
+        sessionToken: result.sessionToken,
+        viewerId: result.viewerId,
+        signalingWsUrl: result.signalingWsUrl || wsUrlFromBase(signalingBase),
         signalingBaseUrl: signalingBase,
-        shortCode: code.toUpperCase(),
+        shortCode: normalized,
+        deviceLabel: deviceLabel || null,
       });
       savePairing(next);
       pairing = next;
+      claimWaiting = false;
+      claimStatus = null;
       await startSession(next);
     } catch (e) {
-      claimError =
-        e instanceof SignalingApiError
-          ? e.message
-          : `Claim failed: ${e instanceof Error ? e.message : e}`;
+      if (
+        e instanceof SignalingApiError &&
+        (e.code === 'cancelled' || /cancelled/i.test(e.message))
+      ) {
+        claimError = null;
+        claimStatus = null;
+      } else {
+        claimError =
+          e instanceof SignalingApiError
+            ? e.message
+            : `Claim failed: ${e instanceof Error ? e.message : e}`;
+      }
     } finally {
       claimBusy = false;
+      claimWaiting = false;
+      if (claimAbort === ac) claimAbort = null;
     }
   }
 
-  /** @param {string} raw */
-  async function claimWithJson(raw) {
+  /**
+   * @param {string} code
+   * @param {string} deviceLabel
+   */
+  async function claimWithCode(code, deviceLabel) {
+    await runAcceptGatedClaim(code, deviceLabel);
+  }
+
+  /**
+   * @param {string} raw
+   * @param {string} deviceLabel
+   */
+  async function claimWithJson(raw, deviceLabel) {
     claimError = null;
-    claimBusy = true;
     try {
       const payload = PairingPayload.decode(raw);
-      if (!payload.pairingToken && !payload.sessionToken) {
-        throw new Error('Payload needs token or sessionToken');
-      }
-      api.setBaseUrl(signalingBase);
 
-      let next = payload;
-      if (payload.pairingToken && !payload.sessionToken) {
-        const claimed = await api.claimRoom({
-          pairingToken: payload.pairingToken,
-          roomId: payload.roomId || undefined,
-          code: payload.shortCode || undefined,
-          deviceId,
-        });
-        next = new PairingPayload({
-          version: payload.version,
-          roomId: claimed.roomId || payload.roomId,
-          pairingToken: payload.pairingToken,
-          sessionToken: claimed.sessionToken,
-          signalingWsUrl: claimed.signalingWsUrl,
-          signalingBaseUrl: signalingBase,
-          shortCode: payload.shortCode,
-        });
-      } else if (!payload.signalingWsUrl) {
-        next = payload.with({
-          signalingWsUrl: wsUrlFromBase(signalingBase),
-          signalingBaseUrl: signalingBase,
-        });
+      // Already-paired session paste (reconnect credentials)
+      if (payload.isValid) {
+        if (payload.signalingBaseUrl) {
+          const base = normalizeBase(payload.signalingBaseUrl);
+          if (base) {
+            signalingBase = base;
+            saveSignalingBase(base);
+            api.setBaseUrl(base);
+          }
+        } else if (payload.signalingWsUrl) {
+          const base = baseFromWs(payload.signalingWsUrl);
+          if (base) {
+            signalingBase = base;
+            saveSignalingBase(base);
+            api.setBaseUrl(base);
+          }
+        }
+        savePairing(payload);
+        pairing = payload;
+        await startSession(payload);
+        return;
       }
 
-      if (!next.isValid) throw new Error('Incomplete pairing payload after claim');
-      savePairing(next);
-      pairing = next;
-      await startSession(next);
+      if (payload.signalingWsUrl || payload.signalingBaseUrl) {
+        const base =
+          normalizeBase(payload.signalingBaseUrl || '') ||
+          baseFromWs(payload.signalingWsUrl);
+        if (base) {
+          signalingBase = base;
+          saveSignalingBase(base);
+          api.setBaseUrl(base);
+        }
+      }
+
+      if (!payload.shortCode) {
+        throw new Error(
+          'Payload needs a code (v2 QR) or a stored sessionToken to reconnect',
+        );
+      }
+
+      await runAcceptGatedClaim(
+        payload.shortCode,
+        deviceLabel || payload.deviceLabel || '',
+      );
     } catch (e) {
       claimError =
         e instanceof SignalingApiError
           ? e.message
           : `Could not pair: ${e instanceof Error ? e.message : e}`;
-    } finally {
-      claimBusy = false;
     }
+  }
+
+  function cancelClaim() {
+    claimAbort?.abort();
+    claimAbort = null;
+    claimBusy = false;
+    claimWaiting = false;
+    claimStatus = null;
   }
 
   /** @param {string} url */
@@ -224,11 +343,12 @@
   }
 
   async function unpair() {
-    if (pairing?.joinToken && pairing.roomId) {
+    if (pairing?.sessionToken && pairing.roomId) {
       try {
         api.setBaseUrl(signalingBase);
+        // Viewer session can tear down the room (same as Flutter revokeLocalAndRemote).
         await api.revokeRoom(pairing.roomId, {
-          token: pairing.joinToken,
+          token: pairing.sessionToken,
           role: 'viewer',
         });
       } catch {
@@ -277,9 +397,12 @@
     {#if !pairing}
       <PairingPanel
         busy={claimBusy}
+        waiting={claimWaiting}
+        statusMessage={claimStatus}
         error={claimError}
         onClaimCode={claimWithCode}
         onClaimJson={claimWithJson}
+        onCancel={cancelClaim}
       />
     {:else}
       <ListenSurface

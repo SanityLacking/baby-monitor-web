@@ -2,9 +2,10 @@
 
 Browser/desktop **viewer** for [Baby Monitor](https://github.com/SanityLacking/baby-monitor). Pair with a phone running the Flutter **Monitor** role, then listen to live audio over WebRTC.
 
-- **Role:** Viewer only (no mic / monitor mode in v1)
+- **Role:** Viewer only (no mic / monitor mode)
 - **Stack:** Vite + Svelte 5 (SPA), native `RTCPeerConnection`
 - **Signaling default:** `https://baby-monitor-signal.onrender.com`
+- **Pairing:** v2 Accept-gated — claim returns `pending_accept`; no session until the Monitor taps Accept
 
 This repo is separate from the Flutter app (`baby-monitor`) and the control plane (`baby-monitor-signal`).
 
@@ -48,16 +49,18 @@ The choice is stored in `localStorage`.
 
 ---
 
-## Pair with a phone Monitor
+## Pair with a phone Monitor (pairing v2)
 
-1. On the phone, open Baby Monitor → **Monitor** → create / show pairing (QR or copy JSON).
+1. On the phone, open Baby Monitor → **Monitor** → start listening (shows a **5-character** code / QR).
 2. In this web viewer, either:
-   - **Paste payload** — paste the QR JSON (`roomId`, `token`, `code`, `signaling`), or
-   - **Code + token** — short code **and** pairing token (token alone is not enough; short code alone is not enough).
-3. Tap **Claim & connect**. The viewer calls `POST /v1/rooms/claim`, stores the session token, opens `/ws`, and waits for the Monitor’s WebRTC offer.
-4. When audio arrives, browsers may require a click — use **Tap to unmute** / **Listen**.
+   - **Enter code** — type the 5-char code (+ optional device name), or
+   - **Paste QR JSON** — `{ "v": 2, "code": "K7M2Q", "roomId": "…", "signaling": "wss://…/ws" }`
+3. Tap **Request pairing**. The viewer calls `POST /v1/rooms/claim` → **202 `pending_accept`**.
+4. On the phone Monitor, tap **Accept**. The viewer polls `GET /v1/pairing-requests/:id` (and listens for `pairing_result`) until tokens arrive.
+5. Only after Accept does the viewer store `sessionToken` + `viewerId`, open `/ws`, and wait for the Monitor’s WebRTC offer.
+6. When audio arrives, browsers may require a click — use **Tap to unmute** / **Listen**.
 
-Unpair clears local credentials and optionally calls `POST /v1/rooms/:roomId/revoke`.
+Reconnect uses stored session credentials — no code, no Accept. Unpair clears local credentials and calls `POST /v1/rooms/:roomId/revoke`. Mid-session Unpair from the Monitor surfaces “This device was unpaired on the monitor.”
 
 ---
 
@@ -67,11 +70,12 @@ Unpair clears local credentials and optionally calls `POST /v1/rooms/:roomId/rev
 |--------|------|-----|
 | `GET` | `/health` | Connectivity check |
 | `GET` | `/v1/ice-servers` | ICE list for `RTCPeerConnection` |
-| `POST` | `/v1/rooms/claim` | Claim short code / pairing token |
+| `POST` | `/v1/rooms/claim` | Claim by code → **202 pending_accept** |
+| `GET` | `/v1/pairing-requests/:id` | Poll until accepted / rejected / expired |
 | `POST` | `/v1/rooms/:id/revoke` | Unpair |
-| `WS` | `/ws?roomId&token&role=viewer&deviceId` | Offer/answer/ICE relay + alerts |
+| `WS` | `/ws?roomId&token&role=viewer&deviceId&viewerId` | Offer/answer/ICE + alerts + `pairing_result` / `pairing_revoked` |
 
-### Stubbed / out of scope (v1)
+### Stubbed / out of scope
 
 - Monitor role / microphone capture
 - Push notifications (FCM/APNs)
@@ -80,25 +84,8 @@ Unpair clears local credentials and optionally calls `POST /v1/rooms/:roomId/rev
 
 ---
 
-## Create / push GitHub repo
-
-If this clone has no remote yet:
-
-```bash
-gh repo create SanityLacking/baby-monitor-web --private --source=. --remote=origin --push
-```
-
-Or via the GitHub UI: create `SanityLacking/baby-monitor-web`, then:
-
-```bash
-git remote add origin https://github.com/SanityLacking/baby-monitor-web.git
-git push -u origin main
-```
-
----
-
 ## Related
 
 - Signaling: [SanityLacking/baby-monitor-signal](https://github.com/SanityLacking/baby-monitor-signal)
 - Flutter app: [SanityLacking/baby-monitor](https://github.com/SanityLacking/baby-monitor)
-- Project docs (agent store): `docs/web-viewer.md`, `docs/control-plane.md`
+- Project docs: `docs/web-viewer.md`, `docs/pairing.md`, `docs/control-plane.md`

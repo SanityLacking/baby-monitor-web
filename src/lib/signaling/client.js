@@ -26,6 +26,8 @@ export class SignalingClient {
     this._token = null;
     /** @type {string | null} */
     this._deviceId = null;
+    /** @type {string | null} */
+    this._viewerId = null;
     /** @type {string} */
     this._wsBase = '';
 
@@ -74,6 +76,7 @@ export class SignalingClient {
    *   roomId: string,
    *   token: string,
    *   deviceId: string,
+   *   viewerId?: string,
    *   signalingWsUrl?: string,
    *   signalingBaseUrl?: string,
    *   autoReconnect?: boolean,
@@ -86,12 +89,13 @@ export class SignalingClient {
     this._roomId = opts.roomId;
     this._token = opts.token;
     this._deviceId = opts.deviceId;
+    this._viewerId = opts.viewerId || null;
     this._wsBase =
       opts.signalingWsUrl ||
       (opts.signalingBaseUrl ? wsUrlFromBase(opts.signalingBaseUrl) : '');
 
     if (!this._token) {
-      this.lastError = 'Missing session/pairing token — pair again.';
+      this.lastError = 'Missing session token — pair again (Accept on the monitor).';
       this.connected = false;
       this.#emitStatus();
       return false;
@@ -116,6 +120,9 @@ export class SignalingClient {
     uri.searchParams.set('token', this._token);
     uri.searchParams.set('role', this._role);
     uri.searchParams.set('deviceId', this._deviceId);
+    if (this._viewerId) {
+      uri.searchParams.set('viewerId', this._viewerId);
+    }
 
     return new Promise((resolve) => {
       let settled = false;
