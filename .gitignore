@@ -1,0 +1,8 @@
+# Ignore files for baby-monitor-web
+node_modules
+dist
+.DS_Store
+*.local
+.vite
+.env
+.env.*

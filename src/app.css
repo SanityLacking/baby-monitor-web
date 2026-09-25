@@ -1,0 +1,77 @@
+:root {
+  --ink: #1a2420;
+  --ink-soft: #3a4741;
+  --mist: #e7efe9;
+  --fog: #d3e2d8;
+  --sage: #3d6b5a;
+  --sage-bright: #4f8a72;
+  --leaf: #7eb89a;
+  --cream: #f4f7f4;
+  --danger: #9b3d3d;
+  --warn: #8a6a2f;
+  --ok: #2f6b4f;
+  --surface: rgba(244, 247, 244, 0.72);
+  --surface-solid: #f4f7f4;
+  --line: rgba(26, 36, 32, 0.12);
+  --shadow: 0 18px 50px rgba(26, 36, 32, 0.08);
+  --font-display: 'Fraunces', 'Palatino Linotype', Palatino, serif;
+  --font-body: 'Figtree', 'Avenir Next', 'Segoe UI', sans-serif;
+  --radius: 18px;
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 700px at 12% -10%, rgba(126, 184, 154, 0.35), transparent 55%),
+    radial-gradient(900px 600px at 88% 8%, rgba(61, 107, 90, 0.18), transparent 50%),
+    radial-gradient(800px 500px at 50% 110%, rgba(211, 226, 216, 0.9), transparent 60%),
+    linear-gradient(165deg, #eef4ef 0%, #dce8e0 48%, #cfded4 100%);
+  background-attachment: fixed;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--sage-bright);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
